@@ -1,7 +1,5 @@
-# GitHub Sponsors configuration
-github: [Yeachan-Heo]
+github: [robertclapp]
+custom:
+  - "https://buymeacoffee.com/robertclapp"
+  - "https://gumroad.com/robertclapp"
 
-# Other platforms (uncomment when ready)
-# ko_fi: your_username
-# buy_me_a_coffee: your_username
-# open_collective: oh-my-claudecode
