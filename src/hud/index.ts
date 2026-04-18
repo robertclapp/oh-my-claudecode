@@ -12,6 +12,7 @@ import {
   readStdinCache,
   getContextPercent,
   getModelName,
+  getRateLimitsFromStdin,
   stabilizeContextPercent,
 } from "./stdin.js";
 import { parseTranscript } from "./transcript.js";
@@ -52,6 +53,7 @@ import { homedir } from "os";
 import { spawn } from "child_process";
 import { fileURLToPath } from "url";
 import { getOmcRoot } from "../lib/worktree-paths.js";
+import { getClaudeConfigDir } from "../utils/config-dir.js";
 
 /**
  * Extract session ID (UUID) from a transcript path.
@@ -190,6 +192,44 @@ async function calculateSessionHealth(
 }
 
 /**
+ * Show installation diagnostic when called from CLI without stdin.
+ * Helps users verify HUD setup after omc-setup.
+ */
+function showDiagnostic(): void {
+  const version = getRuntimePackageVersion();
+  const configDir = getClaudeConfigDir();
+  const hudScript = join(configDir, "hud", "omc-hud.mjs");
+  const settingsFile = join(configDir, "settings.json");
+
+  const hudExists = existsSync(hudScript);
+  let statusLineOk = false;
+  try {
+    const settings = JSON.parse(readFileSync(settingsFile, "utf-8"));
+    const sl = settings.statusLine;
+    if (sl && typeof sl === "object" && typeof (sl as Record<string, unknown>).command === "string") {
+      statusLineOk = ((sl as Record<string, unknown>).command as string).includes("omc-hud");
+    } else if (typeof sl === "string") {
+      statusLineOk = sl.includes("omc-hud");
+    }
+  } catch {
+    /* settings.json missing or invalid */
+  }
+
+  const config = readHudConfig();
+  const preset = config.preset ?? "focused";
+
+  console.log(`[OMC] HUD v${version} | preset: ${preset}`);
+  console.log(`  HUD script:  ${hudExists ? "installed" : "MISSING"}`);
+  console.log(`  statusLine:  ${statusLineOk ? "configured" : "NOT configured"}`);
+
+  if (!hudExists || !statusLineOk) {
+    console.log("  Run /oh-my-claudecode:hud setup to fix.");
+  } else {
+    console.log("  HUD renders automatically inside Claude Code sessions.");
+  }
+}
+
+/**
  * Main HUD entry point
  * @param watchMode - true when called from the --watch polling loop (stdin is TTY)
  */
@@ -212,18 +252,12 @@ async function main(watchMode = false, skipInit = false): Promise<void> {
         return;
       }
     } else {
-      // Non-watch invocation with no stdin - suggest setup
-      console.log("[OMC] run /omc-setup to install properly");
+      // CLI invocation (TTY, no stdin) — show installation diagnostic
+      showDiagnostic();
       return;
     }
 
     const cwd = resolveToWorktreeRoot(stdin.cwd || undefined);
-
-    // Initialize HUD state (cleanup stale/orphaned tasks)
-    // Must happen after cwd resolution so cleanup targets the correct project directory
-    if (!skipInit) {
-      await initializeHUDState(cwd);
-    }
 
     // Read configuration (before transcript parsing so we can use staleTaskThresholdMinutes)
     // Clone to avoid mutating shared DEFAULT_HUD_CONFIG when applying runtime width detection
@@ -239,7 +273,7 @@ async function main(watchMode = false, skipInit = false): Promise<void> {
         0;
       if (cols > 0) {
         config.maxWidth = cols;
-        if (!config.wrapMode) config.wrapMode = "wrap";
+        if (config.wrapMode === "truncate") config.wrapMode = "wrap";
       }
     }
 
@@ -258,6 +292,12 @@ async function main(watchMode = false, skipInit = false): Promise<void> {
       resolvedTranscriptPath ?? stdin.transcript_path ?? "",
     );
 
+    // Initialize HUD state (cleanup stale/orphaned tasks)
+    // Must happen after cwd resolution so cleanup targets the correct project directory
+    if (!skipInit) {
+      await initializeHUDState(cwd, currentSessionId ?? undefined);
+    }
+
     // Read OMC state files
     const ralph = readRalphStateForHud(cwd, currentSessionId ?? undefined);
     const ultrawork = readUltraworkStateForHud(
@@ -271,7 +311,7 @@ async function main(watchMode = false, skipInit = false): Promise<void> {
     );
 
     // Read HUD state for background tasks
-    const hudState = readHudState(cwd);
+    const hudState = readHudState(cwd, currentSessionId ?? undefined);
     const _backgroundTasks = hudState?.backgroundTasks || [];
 
     // Persist session start time to survive tail-parsing resets (#528)
@@ -297,12 +337,17 @@ async function main(watchMode = false, skipInit = false): Promise<void> {
       stateToWrite.sessionStartTimestamp = sessionStart.toISOString();
       stateToWrite.sessionId = currentSessionId ?? undefined;
       stateToWrite.timestamp = new Date().toISOString();
-      writeHudState(stateToWrite, cwd);
+      writeHudState(stateToWrite, cwd, currentSessionId ?? undefined);
     }
 
-    // Fetch rate limits from OAuth API (if available)
+    // Prefer Claude Code stdin rate limits when available to avoid cold-start API fetches.
+    const stdinRateLimits = getRateLimitsFromStdin(stdin);
     const rateLimitsResult =
-      config.elements.rateLimits !== false ? await getUsage() : null;
+      config.elements.rateLimits === false
+        ? null
+        : stdinRateLimits
+          ? { rateLimits: stdinRateLimits }
+          : await getUsage();
 
     // Fetch custom rate limit buckets (if configured)
     const customBuckets =
@@ -415,6 +460,7 @@ async function main(watchMode = false, skipInit = false): Promise<void> {
         ? basename(process.env.CLAUDE_CONFIG_DIR).replace(/^\./, "")
         : null,
       sessionSummary,
+      lastToolName: transcriptData.lastToolName,
     };
 
     // Debug: log data if OMC_DEBUG is set
@@ -463,13 +509,15 @@ async function main(watchMode = false, skipInit = false): Promise<void> {
 
     // Apply safe mode sanitization if enabled (Issue #346)
     // This strips ANSI codes and uses ASCII-only output to prevent
-    // terminal rendering corruption during concurrent updates
-    // On Windows, always use safe mode to prevent terminal rendering issues
-    // with non-breaking spaces and ANSI escape sequences
-    // Keep explicit win32 check visible for regression tests: process.platform === 'win32'
-    // config.elements.safeMode || process.platform === 'win32'
+    // terminal rendering corruption during concurrent updates.
+    // On Windows, default to safe mode unless the user explicitly sets safeMode: false
+    // (e.g. Windows Terminal and modern terminals support ANSI natively).
+    // The win32 fallback is retained for configs that omit safeMode entirely
+    // (before default merge, e.g. minimal config files or future schema changes).
+    // explicit false overrides platform detection: process.platform === 'win32'
     const useSafeMode =
-      config.elements.safeMode || process.platform === "win32";
+      config.elements.safeMode !== false &&
+      (config.elements.safeMode || process.platform === "win32");
 
     if (useSafeMode) {
       output = sanitizeOutput(output);

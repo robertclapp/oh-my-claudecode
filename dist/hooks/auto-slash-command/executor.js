@@ -7,14 +7,14 @@
  */
 import { existsSync, readdirSync, readFileSync } from 'fs';
 import { join, basename } from 'path';
-import { getClaudeConfigDir } from '../../utils/paths.js';
+import { getClaudeConfigDir } from '../../utils/config-dir.js';
 import { resolveLiveData } from './live-data.js';
 import { parseFrontmatter, parseFrontmatterAliases, stripOptionalQuotes } from '../../utils/frontmatter.js';
 import { formatOmcCliInvocation, rewriteOmcCliInvocations } from '../../utils/omc-cli-rendering.js';
 import { parseSkillPipelineMetadata, renderSkillPipelineGuidance } from '../../utils/skill-pipeline.js';
 import { renderSkillResourcesGuidance } from '../../utils/skill-resources.js';
 import { renderSkillRuntimeGuidance } from '../../features/builtin-skills/runtime-guidance.js';
-import { getSkillsDir } from '../../features/builtin-skills/skills.js';
+import { getSkillsDir, renderBundledSkillBody } from '../../features/builtin-skills/skills.js';
 /** Claude config directory */
 const CLAUDE_CONFIG_DIR = getClaudeConfigDir();
 /**
@@ -260,7 +260,10 @@ function formatCommandTemplate(cmd, args) {
     sections.push('---\n');
     // Resolve arguments in content, then execute any live-data commands
     const resolvedContent = resolveArguments(cmd.content || '', displayArgs);
-    const injectedContent = rewriteOmcCliInvocations(resolveLiveData(resolvedContent));
+    const baseContent = resolveLiveData(resolvedContent);
+    const injectedContent = cmd.scope === 'skill'
+        ? renderBundledSkillBody(cmd.metadata.name, baseContent)
+        : rewriteOmcCliInvocations(baseContent);
     const runtimeGuidance = cmd.scope === 'skill' && !isDeepInterviewAutoresearch
         ? renderSkillRuntimeGuidance(cmd.metadata.name)
         : '';
@@ -291,7 +294,7 @@ export function executeSlashCommand(parsed) {
     if (!command) {
         return {
             success: false,
-            error: `Command "/${parsed.command}" not found. Available commands are in $CLAUDE_CONFIG_DIR/commands/ (or ~/.claude/commands/ by default) or .claude/commands/`,
+            error: `Command "/${parsed.command}" not found. Available commands are in ${CLAUDE_CONFIG_DIR}/commands/ or .claude/commands/`,
         };
     }
     try {

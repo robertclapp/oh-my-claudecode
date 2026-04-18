@@ -3,6 +3,7 @@ import { isAbsolute, normalize, win32 as win32Path } from 'path';
 import { validateTeamName } from './team-name.js';
 import { normalizeToCcAlias } from '../features/delegation-enforcer.js';
 import { isBedrock, isVertexAI, isProviderSpecificModelId } from '../config/models.js';
+import { isExternalLLMDisabled } from '../lib/security-config.js';
 
 export type CliAgentType = 'claude' | 'codex' | 'gemini';
 
@@ -29,6 +30,12 @@ export interface WorkerLaunchConfig {
    * Used by runtime preflight validation to ensure spawns are pinned.
    */
   resolvedBinaryPath?: string;
+  /**
+   * Optional path the worker writes its structured verdict JSON to
+   * (used by the CLI-worker output contract for critic/reviewer stages).
+   * Consumed by the worker-completion handler in runtime-v2.
+   */
+  output_file?: string;
 }
 
 /** @deprecated Backward-compat shim for older team API consumers. */
@@ -224,6 +231,12 @@ export function getContract(agentType: CliAgentType): CliAgentContract {
   if (!contract) {
     throw new Error(`Unknown agent type: ${agentType}. Supported: ${Object.keys(CONTRACTS).join(', ')}`);
   }
+  if (agentType !== 'claude' && isExternalLLMDisabled()) {
+    throw new Error(
+      `External LLM provider "${agentType}" is blocked by security policy (disableExternalLLM). ` +
+      `Only Claude workers are allowed in the current security configuration.`
+    );
+  }
   return contract;
 }
 
@@ -387,6 +400,12 @@ export function isPromptModeAgent(agentType: CliAgentType): boolean {
 export function resolveClaudeWorkerModel(
   env: NodeJS.ProcessEnv = process.env,
 ): string | undefined {
+  // When force-inherit routing is enabled, do not resolve/override worker model.
+  // This preserves parent model inheritance and avoids alias normalization drift.
+  if (env.OMC_ROUTING_FORCE_INHERIT === 'true') {
+    return undefined;
+  }
+
   // Only needed for non-standard providers
   if (!isBedrock() && !isVertexAI()) {
     return undefined;

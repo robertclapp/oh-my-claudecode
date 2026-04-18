@@ -112,13 +112,11 @@ async function writeJsonAtomic(path, value) {
     await rename(tmpPath, path);
 }
 async function defaultTmuxSendKeys(target, text, literal = false) {
-    const { execFile } = await import('child_process');
-    const { promisify } = await import('util');
-    const execFileAsync = promisify(execFile);
+    const { tmuxExecAsync } = await import('../cli/tmux-utils.js');
     const args = literal
         ? ['send-keys', '-t', target, '-l', text]
         : ['send-keys', '-t', target, text];
-    await execFileAsync('tmux', args, { timeout: 3000 });
+    await tmuxExecAsync(args, { timeout: 3000 });
 }
 const defaultTmux = {
     async sendKeys(target, text, literal = false) {
@@ -157,7 +155,7 @@ async function readWorkerHeartbeatSnapshot(stateDir, teamName, workerName, nowMs
     const heartbeatPath = join(stateDir, 'team', teamName, 'workers', workerName, 'heartbeat.json');
     try {
         if (!existsSync(heartbeatPath))
-            return { last_turn_at: null, fresh: true, missing: true };
+            return { last_turn_at: null, fresh: false, missing: true };
         const raw = await readFile(heartbeatPath, 'utf-8');
         const parsed = JSON.parse(raw);
         const lastTurnAt = parsed && typeof parsed.last_turn_at === 'string' ? parsed.last_turn_at : null;

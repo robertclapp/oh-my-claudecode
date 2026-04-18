@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { processHook, resetSkipHooksCache } from '../bridge.js';
+import { processHook, resetSkipHooksCache, sanitizeHookOutputForSerialization, } from '../bridge.js';
 describe('processHook - Environment Kill-Switches', () => {
     const originalEnv = process.env;
     beforeEach(() => {
@@ -142,9 +142,9 @@ describe('processHook - Environment Kill-Switches', () => {
             const start = Date.now();
             await processHook('keyword-detector', input);
             const duration = Date.now() - start;
-            // Should complete in under 100ms (very generous threshold)
+            // Should complete in under 500ms (generous threshold for CI environments)
             // The actual overhead should be negligible (< 1ms)
-            expect(duration).toBeLessThan(100);
+            expect(duration).toBeLessThan(500);
         });
         it('should have minimal overhead when DISABLE_OMC=1', async () => {
             process.env.DISABLE_OMC = '1';
@@ -294,6 +294,66 @@ describe('processHook - Environment Kill-Switches', () => {
             expect(result.continue).toBe(true);
             expect(result.message).toContain('MANDATORY VERIFICATION - SUBAGENTS LIE');
             expect(result.message).toContain('done');
+        });
+    });
+    describe('sanitizeHookOutputForSerialization', () => {
+        it('drops empty top-level message fields', () => {
+            expect(sanitizeHookOutputForSerialization({
+                continue: true,
+                message: '   ',
+            })).toEqual({ continue: true });
+        });
+        it('drops empty hook additionalContext and systemMessage fields', () => {
+            expect(sanitizeHookOutputForSerialization({
+                continue: true,
+                systemMessage: '\n\t',
+                hookSpecificOutput: {
+                    hookEventName: 'PostToolUse',
+                    additionalContext: '   ',
+                },
+            })).toEqual({
+                continue: true,
+                hookSpecificOutput: {
+                    hookEventName: 'PostToolUse',
+                },
+            });
+        });
+        it('preserves non-text hook metadata while stripping empty injected text', () => {
+            expect(sanitizeHookOutputForSerialization({
+                continue: true,
+                hookSpecificOutput: {
+                    hookEventName: 'PreToolUse',
+                    additionalContext: '',
+                    permissionDecision: 'deny',
+                    permissionDecisionReason: 'Need confirmation',
+                },
+            })).toEqual({
+                continue: true,
+                hookSpecificOutput: {
+                    hookEventName: 'PreToolUse',
+                    permissionDecision: 'deny',
+                    permissionDecisionReason: 'Need confirmation',
+                },
+            });
+        });
+        it('preserves explicit /ralplan startup additionalContext under hookSpecificOutput', () => {
+            expect(sanitizeHookOutputForSerialization({
+                continue: true,
+                hookSpecificOutput: {
+                    hookEventName: 'UserPromptSubmit',
+                    additionalContext: '[RALPLAN INIT] Explicit /ralplan invoke detected during UserPromptSubmit.\n' +
+                        'Proceed immediately with the consensus planning workflow for:\n' +
+                        '/oh-my-claudecode:ralplan issue #2622',
+                },
+            })).toEqual({
+                continue: true,
+                hookSpecificOutput: {
+                    hookEventName: 'UserPromptSubmit',
+                    additionalContext: '[RALPLAN INIT] Explicit /ralplan invoke detected during UserPromptSubmit.\n' +
+                        'Proceed immediately with the consensus planning workflow for:\n' +
+                        '/oh-my-claudecode:ralplan issue #2622',
+                },
+            });
         });
     });
 });

@@ -51,6 +51,21 @@ vi.mock('child_process', async (importOriginal) => {
         }
         return { stdout: '', stderr: '' };
     };
+    function mockExec(cmd, cb) {
+        if (cmd.includes('display-message') && cmd.includes('#{window_width}')) {
+            cb(null, '160\n', '');
+        }
+        else {
+            cb(null, '', '');
+        }
+        return {};
+    }
+    mockExec[utilPromisify.custom] = async (cmd) => {
+        if (cmd.includes('display-message') && cmd.includes('#{window_width}')) {
+            return { stdout: '160\n', stderr: '' };
+        }
+        return { stdout: '', stderr: '' };
+    };
     return {
         ...actual,
         spawnSync: vi.fn((cmd, args = []) => {
@@ -62,6 +77,7 @@ vi.mock('child_process', async (importOriginal) => {
             }
             return { status: 0, stdout: '', stderr: '' };
         }),
+        exec: mockExec,
         execFile: mockExecFile,
     };
 });
@@ -121,7 +137,7 @@ describe('spawnWorkerForTask – prompt mode (Gemini & Codex)', () => {
         expect(launchCmd).toContain("'-i'");
         // Should contain the inbox path reference
         expect(launchCmd).toContain('.omc/state/team/test-team/workers/worker-1/inbox.md');
-        expect(launchCmd).toContain('start work now');
+        expect(launchCmd).toContain('execute now');
         expect(launchCmd).toContain('concrete progress');
         rmSync(cwd, { recursive: true, force: true });
     });
@@ -158,7 +174,7 @@ describe('spawnWorkerForTask – prompt mode (Gemini & Codex)', () => {
         expect(launchCmd).not.toContain("'-i'");
         // Should contain the inbox path as a positional argument
         expect(launchCmd).toContain('.omc/state/team/test-team/workers/worker-1/inbox.md');
-        expect(launchCmd).toContain('start work now');
+        expect(launchCmd).toContain('execute now');
         expect(launchCmd).toContain('concrete progress');
         rmSync(cwd, { recursive: true, force: true });
     });
@@ -178,8 +194,9 @@ describe('spawnWorkerForTask – prompt mode (Gemini & Codex)', () => {
         await spawnWorkerForTask(runtime, 'worker-1', 0);
         const captureCalls = tmuxCalls.args.filter(args => args[0] === 'capture-pane');
         expect(captureCalls.length).toBeGreaterThan(0);
-        const readInstructionCalls = tmuxCalls.args.filter(args => args[0] === 'send-keys' && args.includes('-l') && (args[args.length - 1] ?? '').includes('start work now'));
+        const readInstructionCalls = tmuxCalls.args.filter(args => args[0] === 'send-keys' && args.includes('-l') && (args[args.length - 1] ?? '').includes('execute now'));
         expect(readInstructionCalls.length).toBe(1);
+        expect(tmuxCalls.args).toContainEqual(['set-window-option', '-t', 'test-session:0', 'main-pane-width', '80']);
         rmSync(cwd, { recursive: true, force: true });
     });
     it('non-prompt worker throws when pane never becomes ready and resets task to pending', async () => {

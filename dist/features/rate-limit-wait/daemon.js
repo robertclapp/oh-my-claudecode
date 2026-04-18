@@ -55,7 +55,7 @@ const DAEMON_ENV_ALLOWLIST = [
     // Shell
     'SHELL',
     // Node.js
-    'NODE_ENV',
+    'NODE_ENV', 'NODE_EXTRA_CA_CERTS',
     // Proxy settings
     'HTTP_PROXY', 'HTTPS_PROXY', 'http_proxy', 'https_proxy', 'NO_PROXY', 'no_proxy',
     // Windows system
@@ -318,7 +318,7 @@ async function pollLoop(config) {
                     ? 'Rate limited - scanning for blocked panes'
                     : 'Usage API degraded (429/stale cache) - scanning for blocked panes';
                 log(scanReason, config);
-                const blockedPanes = scanForBlockedPanes(config.paneLinesToCapture);
+                const blockedPanes = scanForBlockedPanes(config.paneLinesToCapture, dirname(config.stateFilePath));
                 // Add newly detected blocked panes
                 for (const pane of blockedPanes) {
                     const existing = state.blockedPanes.find((p) => p.id === pane.id);
@@ -561,7 +561,7 @@ export async function detectBlockedPanes(config) {
         };
     }
     const rateLimitStatus = await checkRateLimitStatus();
-    const blockedPanes = scanForBlockedPanes(cfg.paneLinesToCapture);
+    const blockedPanes = scanForBlockedPanes(cfg.paneLinesToCapture, dirname(cfg.stateFilePath));
     return {
         success: true,
         message: formatBlockedPanesSummary(blockedPanes),

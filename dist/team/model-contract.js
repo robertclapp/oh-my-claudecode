@@ -3,6 +3,7 @@ import { isAbsolute, normalize, win32 as win32Path } from 'path';
 import { validateTeamName } from './team-name.js';
 import { normalizeToCcAlias } from '../features/delegation-enforcer.js';
 import { isBedrock, isVertexAI, isProviderSpecificModelId } from '../config/models.js';
+import { isExternalLLMDisabled } from '../lib/security-config.js';
 const resolvedPathCache = new Map();
 const UNTRUSTED_PATH_PATTERNS = [
     /^\/tmp(\/|$)/,
@@ -172,6 +173,10 @@ export function getContract(agentType) {
     if (!contract) {
         throw new Error(`Unknown agent type: ${agentType}. Supported: ${Object.keys(CONTRACTS).join(', ')}`);
     }
+    if (agentType !== 'claude' && isExternalLLMDisabled()) {
+        throw new Error(`External LLM provider "${agentType}" is blocked by security policy (disableExternalLLM). ` +
+            `Only Claude workers are allowed in the current security configuration.`);
+    }
     return contract;
 }
 function validateBinaryRef(binary) {
@@ -313,6 +318,11 @@ export function isPromptModeAgent(agentType) {
  * handles bare aliases fine).
  */
 export function resolveClaudeWorkerModel(env = process.env) {
+    // When force-inherit routing is enabled, do not resolve/override worker model.
+    // This preserves parent model inheritance and avoids alias normalization drift.
+    if (env.OMC_ROUTING_FORCE_INHERIT === 'true') {
+        return undefined;
+    }
     // Only needed for non-standard providers
     if (!isBedrock() && !isVertexAI()) {
         return undefined;

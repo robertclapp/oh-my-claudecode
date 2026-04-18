@@ -2,6 +2,42 @@
  * tmux utility functions for omc native shell launch
  * Adapted from oh-my-codex patterns for omc
  */
+import { type ExecFileSyncOptionsWithStringEncoding, type ExecSyncOptionsWithStringEncoding, type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns } from 'child_process';
+export interface TmuxExecOptions {
+    /** Strip TMUX env var so the command targets the default tmux server.
+     *  Default: false — preserves TMUX (targets the current server).
+     *  Set to true for OMC-owned background sessions and cross-session scans. */
+    stripTmux?: boolean;
+}
+export declare function tmuxEnv(): NodeJS.ProcessEnv;
+export declare function isNativeWindowsShell(): boolean;
+export declare function tmuxExec(args: string[], opts?: TmuxExecOptions & Omit<ExecFileSyncOptionsWithStringEncoding, 'env' | 'encoding'> & {
+    encoding?: BufferEncoding;
+}): string;
+export declare function tmuxExecAsync(args: string[], opts?: TmuxExecOptions & {
+    timeout?: number;
+}): Promise<{
+    stdout: string;
+    stderr: string;
+}>;
+export declare function tmuxShell(command: string, opts?: TmuxExecOptions & Omit<ExecSyncOptionsWithStringEncoding, 'env' | 'encoding'> & {
+    encoding?: BufferEncoding;
+}): string;
+export declare function tmuxShellAsync(command: string, opts?: TmuxExecOptions & {
+    timeout?: number;
+}): Promise<{
+    stdout: string;
+    stderr: string;
+}>;
+export declare function tmuxSpawn(args: string[], opts?: TmuxExecOptions & Omit<SpawnSyncOptionsWithStringEncoding, 'env' | 'encoding'> & {
+    encoding?: BufferEncoding;
+}): SpawnSyncReturns<string>;
+export declare function tmuxCmdAsync(args: string[], opts?: TmuxExecOptions & {
+    timeout?: number;
+}): Promise<{
+    stdout: string;
+    stderr: string;
+}>;
 export type ClaudeLaunchPolicy = 'inside-tmux' | 'outside-tmux' | 'direct';
 export interface TmuxPaneSnapshot {
     paneId: string;
@@ -39,6 +75,7 @@ export declare function sanitizeTmuxToken(value: string): string;
  * Build shell command string for tmux with proper quoting
  */
 export declare function buildTmuxShellCommand(command: string, args: string[]): string;
+export declare function buildTmuxShellCommandWithEnv(command: string, args: string[], envVars: Record<string, string>): string;
 /**
  * Wrap a command string in the user's login shell with RC file sourcing.
  * Ensures PATH and other environment setup from .bashrc/.zshrc is available

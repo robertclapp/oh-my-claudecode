@@ -106,7 +106,13 @@ export interface TodoContinuationHook {
  * - user_cancel, user_interrupt: Likely user-initiated via UI
  * - ctrl_c: Terminal interrupt (Ctrl+C)
  * - manual_stop: Explicit stop button
- * - abort, cancel, interrupt: Generic abort patterns
+ * - abort, cancel: Generic abort patterns
+ *
+ * Plain `interrupt` is intentionally NOT treated as an explicit user abort.
+ * In practice it can also describe a turn interruption caused by a new user
+ * message arriving during long-running tool execution (issue #2478). Those
+ * interrupted turns should still allow Ralph/persistent-mode resume on the
+ * next stop-hook opportunity unless stronger explicit-cancel signals exist.
  *
  * NOTE: Per official Anthropic docs, the Stop hook "Does not run if
  * the stoppage occurred due to a user interrupt." This means this
@@ -143,6 +149,13 @@ export declare function isContextLimitStop(context?: StopContext): boolean;
  * Fix for: https://github.com/Yeachan-Heo/oh-my-claudecode/issues/777
  */
 export declare function isRateLimitStop(context?: StopContext): boolean;
+/**
+ * Scheduled wake-up stops should not trigger persistent-mode re-enforcement.
+ * Claude Code can resume `/loop` work through the native ScheduleWakeup path,
+ * and stale prior-mode state must not inject continuation/cancel prompts into
+ * that scheduled resume turn.
+ */
+export declare function isScheduledWakeupStop(context?: StopContext): boolean;
 /**
  * Auth-related stop reasons that should bypass continuation re-enforcement.
  * Keep exactly 16 entries in sync with script/template variants.

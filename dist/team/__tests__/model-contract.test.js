@@ -83,6 +83,63 @@ describe('model-contract', () => {
         it('throws for unknown agent type', () => {
             expect(() => getContract('unknown')).toThrow('Unknown agent type');
         });
+        it('blocks codex when external LLM is disabled', async () => {
+            const origSecurity = process.env.OMC_SECURITY;
+            process.env.OMC_SECURITY = 'strict';
+            try {
+                const { clearSecurityConfigCache } = await import('../../lib/security-config.js');
+                clearSecurityConfigCache();
+                expect(() => getContract('codex')).toThrow('blocked by security policy');
+            }
+            finally {
+                if (origSecurity === undefined) {
+                    delete process.env.OMC_SECURITY;
+                }
+                else {
+                    process.env.OMC_SECURITY = origSecurity;
+                }
+                const { clearSecurityConfigCache } = await import('../../lib/security-config.js');
+                clearSecurityConfigCache();
+            }
+        });
+        it('blocks gemini when external LLM is disabled', async () => {
+            const origSecurity = process.env.OMC_SECURITY;
+            process.env.OMC_SECURITY = 'strict';
+            try {
+                const { clearSecurityConfigCache } = await import('../../lib/security-config.js');
+                clearSecurityConfigCache();
+                expect(() => getContract('gemini')).toThrow('blocked by security policy');
+            }
+            finally {
+                if (origSecurity === undefined) {
+                    delete process.env.OMC_SECURITY;
+                }
+                else {
+                    process.env.OMC_SECURITY = origSecurity;
+                }
+                const { clearSecurityConfigCache } = await import('../../lib/security-config.js');
+                clearSecurityConfigCache();
+            }
+        });
+        it('allows claude even when external LLM is disabled', async () => {
+            const origSecurity = process.env.OMC_SECURITY;
+            process.env.OMC_SECURITY = 'strict';
+            try {
+                const { clearSecurityConfigCache } = await import('../../lib/security-config.js');
+                clearSecurityConfigCache();
+                expect(() => getContract('claude')).not.toThrow();
+            }
+            finally {
+                if (origSecurity === undefined) {
+                    delete process.env.OMC_SECURITY;
+                }
+                else {
+                    process.env.OMC_SECURITY = origSecurity;
+                }
+                const { clearSecurityConfigCache } = await import('../../lib/security-config.js');
+                clearSecurityConfigCache();
+            }
+        });
     });
     describe('buildLaunchArgs', () => {
         it('claude includes --dangerously-skip-permissions', () => {
@@ -284,6 +341,24 @@ describe('model-contract', () => {
         });
     });
     describe('resolveClaudeWorkerModel (issue #1695)', () => {
+        it('returns undefined when OMC_ROUTING_FORCE_INHERIT=true even if Bedrock model env vars are set', () => {
+            vi.stubEnv('OMC_ROUTING_FORCE_INHERIT', 'true');
+            vi.stubEnv('CLAUDE_CODE_USE_BEDROCK', '1');
+            vi.stubEnv('ANTHROPIC_MODEL', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0');
+            vi.stubEnv('CLAUDE_MODEL', 'us.anthropic.claude-opus-4-6-v1:0');
+            vi.stubEnv('CLAUDE_CODE_BEDROCK_SONNET_MODEL', 'us.anthropic.claude-sonnet-4-6-v1:0');
+            vi.stubEnv('OMC_MODEL_MEDIUM', 'us.anthropic.claude-sonnet-4-5-20250929-v1:0');
+            expect(resolveClaudeWorkerModel()).toBeUndefined();
+            vi.unstubAllEnvs();
+        });
+        it('returns undefined when OMC_ROUTING_FORCE_INHERIT=true on Vertex', () => {
+            vi.stubEnv('OMC_ROUTING_FORCE_INHERIT', 'true');
+            vi.stubEnv('CLAUDE_CODE_USE_BEDROCK', '');
+            vi.stubEnv('CLAUDE_CODE_USE_VERTEX', '1');
+            vi.stubEnv('ANTHROPIC_MODEL', 'vertex_ai/claude-sonnet-4-6@20250514');
+            expect(resolveClaudeWorkerModel()).toBeUndefined();
+            vi.unstubAllEnvs();
+        });
         it('returns undefined when not on Bedrock or Vertex', () => {
             vi.stubEnv('CLAUDE_CODE_USE_BEDROCK', '');
             vi.stubEnv('CLAUDE_CODE_USE_VERTEX', '');
