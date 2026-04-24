@@ -41,6 +41,7 @@ import {
   waitForPaneReady,
 } from './tmux-session.js';
 import { TeamPaths, absPath } from './state-paths.js';
+import { ensureWorkerWorktree, removeWorkerWorktree, type TeamWorktreeMode } from './git-worktree.js';
 
 // ── Environment gate ──────────────────────────────────────────────────────────
 
@@ -134,6 +135,7 @@ export async function scaleUp(
     }
 
     const teamStateRoot = config.team_state_root ?? `${leaderCwd}/.omc/state`;
+    const worktreeMode: TeamWorktreeMode = config.worktree_mode ?? 'disabled';
 
     // Resolve the monotonic worker index counter
     let nextIndex = config.next_worker_index ?? (currentCount + 1);
@@ -148,6 +150,9 @@ export async function scaleUp(
         try {
           if (w.pane_id) {
             tmuxExec(['kill-pane', '-t', w.pane_id], { stdio: 'pipe' });
+          }
+          if (w.worktree_created) {
+            removeWorkerWorktree(sanitized, w.name, leaderCwd);
           }
         } catch { /* best-effort pane cleanup */ }
       }
@@ -195,6 +200,14 @@ export async function scaleUp(
       // Create worker directory
       const workerDirPath = absPath(leaderCwd, TeamPaths.workerDir(sanitized, workerName));
       await mkdir(workerDirPath, { recursive: true });
+
+      const worktree = worktreeMode === 'disabled'
+        ? null
+        : ensureWorkerWorktree(sanitized, workerName, leaderCwd, {
+          mode: worktreeMode,
+          requireCleanLeader: true,
+        });
+      const workerCwd = worktree?.path ?? leaderCwd;
 
       // Resolve per-worker provider/model from the team's routing snapshot
       // (Option E stickiness — snapshot is immutable, never re-resolved).
@@ -248,7 +261,7 @@ export async function scaleUp(
         const [launchBinary, ...launchArgs] = buildWorkerArgv(agentType, {
           teamName: sanitized,
           workerName,
-          cwd: leaderCwd,
+          cwd: workerCwd,
           ...(model ? { model } : {}),
         });
         return { launchBinary, launchArgs };
@@ -294,6 +307,7 @@ export async function scaleUp(
         ...getModelWorkerEnv(sanitized, workerName, workerAgentType, env),
         OMC_TEAM_STATE_ROOT: teamStateRoot,
         OMC_TEAM_LEADER_CWD: leaderCwd,
+        ...(worktree ? { OMC_TEAM_WORKTREE_PATH: worktree.path, OMC_TEAM_WORKER_CWD: workerCwd } : {}),
       };
 
       let cmd: string;
@@ -304,7 +318,7 @@ export async function scaleUp(
           envVars: extraEnv,
           launchArgs,
           launchBinary,
-          cwd: leaderCwd,
+          cwd: workerCwd,
         });
       } catch (error) {
         const reason = error instanceof Error ? error.message : String(error);
@@ -321,7 +335,7 @@ export async function scaleUp(
       const splitDirection = splitTarget === (config.leader_pane_id ?? '') ? '-h' : '-v';
 
       const result = tmuxSpawn([
-        'split-window', splitDirection, '-t', splitTarget, '-d', '-P', '-F', '#{pane_id}', '-c', leaderCwd, cmd,
+        'split-window', splitDirection, '-t', splitTarget, '-d', '-P', '-F', '#{pane_id}', '-c', workerCwd, cmd,
       ]);
 
       if (result.status !== 0) {
@@ -356,8 +370,15 @@ export async function scaleUp(
         assigned_tasks: [],
         pid: panePid,
         pane_id: paneId,
-        working_dir: leaderCwd,
+        working_dir: workerCwd,
         team_state_root: teamStateRoot,
+        ...(worktree ? {
+          worktree_repo_root: leaderCwd,
+          worktree_path: worktree.path,
+          worktree_branch: worktree.branch,
+          worktree_detached: worktree.detached,
+          worktree_created: worktree.created,
+        } : {}),
       };
 
       await teamWriteWorkerIdentity(sanitized, workerName, workerInfo, leaderCwd);
