@@ -28,7 +28,7 @@ OMC ships two surfaces and they are designed to coexist:
 | Surface | What you get | Recommended install |
 |---|---|---|
 | **Claude Code plugin** (`oh-my-claudecode@omc`) | In-session skills, agents, hooks, statusline, MCP servers — the `/autopilot`, `/ralph`, `/ultrawork`, `/team` slash commands | Marketplace plugin install (Step 1–2 below) |
-| **Terminal CLI** (`omc` binary, package `oh-my-claude-sisyphus`) | Shell commands: `omc setup`, `omc update`, `omc team`, `omc ask`, `omc autoresearch`, etc. | `npm i -g oh-my-claude-sisyphus@latest` |
+| **Terminal CLI** (`omc` binary, package `oh-my-claude-sisyphus`) | Shell commands: `omc setup`, `omc update`, `omc team`, `omc ask`, and a hard-deprecated `omc autoresearch` shim | `npm i -g oh-my-claude-sisyphus@latest` |
 
 Most users want **both**: the plugin for the in-session experience, and the npm CLI for shell-side automation and updates. Running them in parallel is fully supported — `omc update` and `omc setup` are idempotent and detect the plugin install to avoid duplicating in-session skills (#2252).
 
@@ -231,7 +231,7 @@ These keywords invoke a single appropriate agent directly, without running the f
 ### Next steps
 
 - [Configuration](#configuration) - Adjust agent models and features for your project
-- [Concepts](/docs/concepts) - Understand the relationship between agents, skills, and hooks
+- [Architecture](./ARCHITECTURE.md) - Understand the relationship between agents, skills, and hooks
 
 ---
 

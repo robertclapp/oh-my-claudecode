@@ -119,7 +119,7 @@ describe('state-tools', () => {
             expect(existsSync(legacyRootPath)).toBe(false);
         });
         it('should clear only the requested session for every execution mode', async () => {
-            const modes = ['autopilot', 'ralph', 'ultrawork', 'ultraqa', 'team'];
+            const modes = ['autopilot', 'autoresearch', 'ralph', 'ultrawork', 'ultraqa', 'team'];
             const sessionA = 'session-a';
             const sessionB = 'session-b';
             for (const mode of modes) {
@@ -299,6 +299,18 @@ describe('state-tools', () => {
                 workingDirectory: TEST_DIR,
             });
             expect(result.content[0].text).toContain('team');
+        });
+        it('should include autoresearch mode when autoresearch state is active', async () => {
+            await stateWriteTool.handler({
+                mode: 'autoresearch',
+                active: true,
+                state: { phase: 'running' },
+                workingDirectory: TEST_DIR,
+            });
+            const result = await stateListActiveTool.handler({
+                workingDirectory: TEST_DIR,
+            });
+            expect(result.content[0].text).toContain('autoresearch');
         });
         it('should include deep-interview mode when deep-interview state is active', async () => {
             await stateWriteTool.handler({
@@ -580,6 +592,27 @@ describe('state-tools', () => {
             });
             expect(result.content[0].text).toContain('recovered session file');
             expect(existsSync(join(strandedDir, 'ralph-state.json'))).toBe(false);
+        });
+        it('should clear the owning session when the current session resumed ralph from a different conversation', async () => {
+            const currentSessionId = 'resume-session-b';
+            const ownerSessionId = 'resume-session-a';
+            const ownerDir = join(TEST_DIR, '.omc', 'state', 'sessions', ownerSessionId);
+            mkdirSync(ownerDir, { recursive: true });
+            writeFileSync(join(ownerDir, 'ralph-state.json'), JSON.stringify({
+                active: true,
+                session_id: ownerSessionId,
+                iteration: 4,
+                linked_ultrawork: true,
+            }));
+            const result = await stateClearTool.handler({
+                mode: 'ralph',
+                session_id: currentSessionId,
+                workingDirectory: TEST_DIR,
+            });
+            expect(result.content[0].text).toContain(`cleared owning session: ${ownerSessionId}`);
+            expect(existsSync(join(ownerDir, 'ralph-state.json'))).toBe(false);
+            expect(existsSync(join(TEST_DIR, '.omc', 'state', 'sessions', currentSessionId, 'cancel-signal-state.json'))).toBe(true);
+            expect(existsSync(join(ownerDir, 'cancel-signal-state.json'))).toBe(true);
         });
     });
     describe('session-scoped behavior', () => {

@@ -1,4 +1,4 @@
-export type CliAgentType = 'claude' | 'codex' | 'gemini';
+export type CliAgentType = 'claude' | 'codex' | 'gemini' | 'cursor';
 export interface CliAgentContract {
     agentType: CliAgentType;
     binary: string;
@@ -7,7 +7,7 @@ export interface CliAgentContract {
     parseOutput(rawOutput: string): string;
     /** Whether this agent supports a prompt/headless mode that bypasses TUI input */
     supportsPromptMode?: boolean;
-    /** CLI flag for prompt mode (e.g., '-i' for gemini) */
+    /** CLI flag for prompt mode (e.g., '-p' for gemini) */
     promptModeFlag?: string;
 }
 export interface WorkerLaunchConfig {

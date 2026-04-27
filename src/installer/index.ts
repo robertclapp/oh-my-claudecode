@@ -26,6 +26,7 @@ import { isSkininthegamebrosUser } from '../utils/skininthegamebros-user.js';
 import { syncUnifiedMcpRegistryTargets } from './mcp-registry.js';
 import { OMC_CONFIG_FILE_REL } from '../lib/paths.js';
 import { buildHudWrapper } from '../lib/hud-wrapper-template.js';
+import { syncOmcLearnedUserSkillsForClaudeCode } from '../utils/user-skill-compat.js';
 
 /** Claude Code configuration directory */
 export const CLAUDE_CONFIG_DIR = getClaudeConfigDir();
@@ -603,16 +604,24 @@ function ensureStandaloneHookScripts(log: (msg: string) => void): void {
     }
   }
 
-  for (const filename of readdirSync(templatesLibDir)) {
-    if (filename === 'config-dir.mjs') continue; // sourced from scripts/lib/ below
-    const sourcePath = join(templatesLibDir, filename);
-    const targetPath = join(hooksLibDir, filename);
-    copyFileSync(sourcePath, targetPath);
-    if (!isWindows()) {
-      chmodSync(targetPath, 0o755);
+  if (existsSync(templatesLibDir)) {
+    if (!existsSync(hooksLibDir)) {
+      mkdirSync(hooksLibDir, { recursive: true });
+    }
+
+    for (const filename of readdirSync(templatesLibDir)) {
+      if (!filename.endsWith('.mjs') || filename === 'config-dir.mjs') {
+        continue;
+      }
+
+      const sourcePath = join(templatesLibDir, filename);
+      const targetPath = join(hooksLibDir, filename);
+      copyFileSync(sourcePath, targetPath);
+      if (!isWindows()) {
+        chmodSync(targetPath, 0o755);
+      }
     }
   }
-
   // config-dir.mjs: canonical source is scripts/lib/, not templates (avoids duplication)
   const configDirHelperMjs = join(packageDir, 'scripts', 'lib', 'config-dir.mjs');
   const configDirHelperMjsDest = join(hooksLibDir, 'config-dir.mjs');
@@ -620,7 +629,6 @@ function ensureStandaloneHookScripts(log: (msg: string) => void): void {
   if (!isWindows()) {
     chmodSync(configDirHelperMjsDest, 0o755);
   }
-
   if (!isWindows()) {
     const findNodeSrc = join(packageDir, 'scripts', 'find-node.sh');
     const findNodeDest = join(HOOKS_DIR, 'find-node.sh');
@@ -1378,6 +1386,16 @@ function syncBundledSkillDefinitions(log: (msg: string) => void, options?: { saf
   return installedSkills;
 }
 
+function syncUserSkillCompatShims(log: (msg: string) => void): string[] {
+  const synced = syncOmcLearnedUserSkillsForClaudeCode();
+
+  for (const skillName of synced) {
+    log(`  Synced user skill compatibility shim: ${join(skillName, 'SKILL.md').replace(/\\/g, '/')}`);
+  }
+
+  return synced;
+}
+
 function loadClaudeMdContent(): string {
   const claudeMdPath = join(getPackageDir(), 'docs', 'CLAUDE.md');
 
@@ -1766,6 +1784,13 @@ export function install(options: InstallOptions = {}): InstallResult {
       const removedSkills = cleanupStaleSkills(log);
       if (removedSkills.length > 0) {
         log(`Cleaned up ${removedSkills.length} stale skill(s)`);
+      }
+    }
+
+    if (existsSync(SKILLS_DIR)) {
+      const syncedUserSkillCompat = syncUserSkillCompatShims(log);
+      if (syncedUserSkillCompat.length > 0) {
+        log(`Synced ${syncedUserSkillCompat.length} user skill compatibility shim(s)`);
       }
     }
 

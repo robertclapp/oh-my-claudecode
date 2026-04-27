@@ -22545,6 +22545,7 @@ var import_path14 = require("path");
 // src/lib/mode-names.ts
 var MODE_NAMES = {
   AUTOPILOT: "autopilot",
+  AUTORESEARCH: "autoresearch",
   TEAM: "team",
   RALPH: "ralph",
   ULTRAWORK: "ultrawork",
@@ -22555,6 +22556,7 @@ var MODE_NAMES = {
 };
 var ALL_MODE_NAMES = [
   MODE_NAMES.AUTOPILOT,
+  MODE_NAMES.AUTORESEARCH,
   MODE_NAMES.TEAM,
   MODE_NAMES.RALPH,
   MODE_NAMES.ULTRAWORK,
@@ -22565,6 +22567,7 @@ var ALL_MODE_NAMES = [
 ];
 var MODE_STATE_FILE_MAP = {
   [MODE_NAMES.AUTOPILOT]: "autopilot-state.json",
+  [MODE_NAMES.AUTORESEARCH]: "autoresearch-state.json",
   [MODE_NAMES.TEAM]: "team-state.json",
   [MODE_NAMES.RALPH]: "ralph-state.json",
   [MODE_NAMES.ULTRAWORK]: "ultrawork-state.json",
@@ -22575,6 +22578,7 @@ var MODE_STATE_FILE_MAP = {
 };
 var SESSION_END_MODE_STATE_FILES = [
   { file: MODE_STATE_FILE_MAP[MODE_NAMES.AUTOPILOT], mode: MODE_NAMES.AUTOPILOT },
+  { file: MODE_STATE_FILE_MAP[MODE_NAMES.AUTORESEARCH], mode: MODE_NAMES.AUTORESEARCH },
   { file: MODE_STATE_FILE_MAP[MODE_NAMES.TEAM], mode: MODE_NAMES.TEAM },
   { file: MODE_STATE_FILE_MAP[MODE_NAMES.RALPH], mode: MODE_NAMES.RALPH },
   { file: MODE_STATE_FILE_MAP[MODE_NAMES.ULTRAWORK], mode: MODE_NAMES.ULTRAWORK },
@@ -22586,6 +22590,7 @@ var SESSION_END_MODE_STATE_FILES = [
 ];
 var SESSION_METRICS_MODE_FILES = [
   { file: MODE_STATE_FILE_MAP[MODE_NAMES.AUTOPILOT], mode: MODE_NAMES.AUTOPILOT },
+  { file: MODE_STATE_FILE_MAP[MODE_NAMES.AUTORESEARCH], mode: MODE_NAMES.AUTORESEARCH },
   { file: MODE_STATE_FILE_MAP[MODE_NAMES.RALPH], mode: MODE_NAMES.RALPH },
   { file: MODE_STATE_FILE_MAP[MODE_NAMES.ULTRAWORK], mode: MODE_NAMES.ULTRAWORK },
   { file: MODE_STATE_FILE_MAP[MODE_NAMES.RALPLAN], mode: MODE_NAMES.RALPLAN },
@@ -22599,6 +22604,12 @@ var MODE_CONFIGS = {
     name: "Autopilot",
     stateFile: MODE_STATE_FILE_MAP[MODE_NAMES.AUTOPILOT],
     activeProperty: "active"
+  },
+  [MODE_NAMES.AUTORESEARCH]: {
+    name: "Autoresearch",
+    stateFile: MODE_STATE_FILE_MAP[MODE_NAMES.AUTORESEARCH],
+    activeProperty: "active",
+    hasGlobalState: false
   },
   [MODE_NAMES.TEAM]: {
     name: "Team",
@@ -22635,7 +22646,7 @@ var MODE_CONFIGS = {
     activeProperty: "active"
   }
 };
-var EXCLUSIVE_MODES = [MODE_NAMES.AUTOPILOT];
+var EXCLUSIVE_MODES = [MODE_NAMES.AUTOPILOT, MODE_NAMES.AUTORESEARCH];
 function getStateDir(cwd) {
   return (0, import_path14.join)(getOmcRoot(cwd), "state");
 }
@@ -22835,6 +22846,7 @@ function getActiveSessionsForMode(mode, cwd) {
 // src/tools/state-tools.ts
 var EXECUTION_MODES = [
   "autopilot",
+  "autoresearch",
   "team",
   "ralph",
   "ultrawork",
@@ -22959,6 +22971,36 @@ function clearSessionOwnedStateCandidates(mode, root, sessionId) {
     }
   }
   return { cleared, hadFailure, paths };
+}
+function writeSessionCancelSignal(root, sessionId, mode) {
+  const now = Date.now();
+  const cancelSignalPath = resolveSessionStatePath("cancel-signal", sessionId, root);
+  atomicWriteJsonSync(cancelSignalPath, {
+    active: true,
+    requested_at: new Date(now).toISOString(),
+    expires_at: new Date(now + CANCEL_SIGNAL_TTL_MS).toISOString(),
+    mode,
+    source: "state_clear"
+  });
+}
+function isSessionModeActive(mode, root, sessionId) {
+  if (MODE_CONFIGS[mode]) {
+    return isModeActive(mode, root, sessionId);
+  }
+  const statePath = resolveSessionStatePath(mode, sessionId, root);
+  if (!(0, import_fs14.existsSync)(statePath)) {
+    return false;
+  }
+  try {
+    const state = JSON.parse((0, import_fs14.readFileSync)(statePath, "utf-8"));
+    return state.active === true;
+  } catch {
+    return false;
+  }
+}
+function findSingleOwningSessionForMode(mode, root, requesterSessionId) {
+  const owningSessions = listSessionIds(root).filter((sid) => sid !== requesterSessionId && isSessionModeActive(mode, root, sid));
+  return owningSessions.length === 1 ? owningSessions[0] : void 0;
 }
 var stateReadTool = {
   name: "state_read",
@@ -23224,28 +23266,41 @@ var stateClearTool = {
       };
       if (sessionId) {
         validateSessionId(sessionId);
+        const requestedSessionOwnedPaths = findSessionOwnedStateFiles(mode, sessionId, root);
         for (const teamStatePath of findSessionOwnedStateFiles("team", sessionId, root)) {
           collectTeamNamesForCleanup(teamStatePath);
         }
-        const now = Date.now();
-        const cancelSignalPath = resolveSessionStatePath("cancel-signal", sessionId, root);
-        atomicWriteJsonSync(cancelSignalPath, {
-          active: true,
-          requested_at: new Date(now).toISOString(),
-          expires_at: new Date(now + CANCEL_SIGNAL_TTL_MS).toISOString(),
-          mode,
-          source: "state_clear"
-        });
+        writeSessionCancelSignal(root, sessionId, mode);
         if (MODE_CONFIGS[mode]) {
           const success = clearModeState(mode, root, sessionId);
           const sessionCleanup2 = clearSessionOwnedStateCandidates(mode, root, sessionId);
           const legacyCleanup2 = clearLegacyStateCandidates(mode, root, sessionId);
+          let ownerSessionId2;
+          let ownerSessionCleanup2 = { cleared: 0, hadFailure: false, paths: [] };
+          let ownerLegacyCleanup2 = { cleared: 0, hadFailure: false };
+          if (requestedSessionOwnedPaths.length === 0 && sessionCleanup2.cleared === 0 && legacyCleanup2.cleared === 0) {
+            ownerSessionId2 = findSingleOwningSessionForMode(mode, root, sessionId);
+            if (ownerSessionId2) {
+              if (mode === "team") {
+                for (const teamStatePath of findSessionOwnedStateFiles("team", ownerSessionId2, root)) {
+                  collectTeamNamesForCleanup(teamStatePath);
+                }
+              }
+              writeSessionCancelSignal(root, ownerSessionId2, mode);
+              clearModeState(mode, root, ownerSessionId2);
+              ownerSessionCleanup2 = clearSessionOwnedStateCandidates(mode, root, ownerSessionId2);
+              ownerLegacyCleanup2 = clearLegacyStateCandidates(mode, root, ownerSessionId2);
+            }
+          }
           const ghostNoteParts2 = [];
           if (legacyCleanup2.cleared > 0) {
             ghostNoteParts2.push("ghost legacy file also removed");
           }
           if (sessionCleanup2.cleared > 0) {
             ghostNoteParts2.push(`removed ${sessionCleanup2.cleared} recovered session file${sessionCleanup2.cleared === 1 ? "" : "s"}`);
+          }
+          if (ownerSessionId2) {
+            ghostNoteParts2.push(`cleared owning session: ${ownerSessionId2}`);
           }
           const ghostNote2 = ghostNoteParts2.length > 0 ? ` (${ghostNoteParts2.join(", ")})` : "";
           const runtimeCleanupNote2 = (() => {
@@ -23258,7 +23313,7 @@ var stateClearTool = {
             if (prunedMissions > 0) details.push(`pruned ${prunedMissions} HUD mission entry(ies)`);
             return details.length > 0 ? ` (${details.join(", ")})` : "";
           })();
-          if (success && !legacyCleanup2.hadFailure && !sessionCleanup2.hadFailure) {
+          if (success && !legacyCleanup2.hadFailure && !sessionCleanup2.hadFailure && !ownerSessionCleanup2.hadFailure && !ownerLegacyCleanup2.hadFailure) {
             return {
               content: [{
                 type: "text",
@@ -23276,12 +23331,31 @@ var stateClearTool = {
         }
         const sessionCleanup = clearSessionOwnedStateCandidates(mode, root, sessionId);
         const legacyCleanup = clearLegacyStateCandidates(mode, root, sessionId);
+        let ownerSessionId;
+        let ownerSessionCleanup = { cleared: 0, hadFailure: false, paths: [] };
+        let ownerLegacyCleanup = { cleared: 0, hadFailure: false };
+        if (requestedSessionOwnedPaths.length === 0 && sessionCleanup.cleared === 0 && legacyCleanup.cleared === 0) {
+          ownerSessionId = findSingleOwningSessionForMode(mode, root, sessionId);
+          if (ownerSessionId) {
+            if (mode === "team") {
+              for (const teamStatePath of findSessionOwnedStateFiles("team", ownerSessionId, root)) {
+                collectTeamNamesForCleanup(teamStatePath);
+              }
+            }
+            writeSessionCancelSignal(root, ownerSessionId, mode);
+            ownerSessionCleanup = clearSessionOwnedStateCandidates(mode, root, ownerSessionId);
+            ownerLegacyCleanup = clearLegacyStateCandidates(mode, root, ownerSessionId);
+          }
+        }
         const ghostNoteParts = [];
         if (legacyCleanup.cleared > 0) {
           ghostNoteParts.push("ghost legacy file also removed");
         }
         if (sessionCleanup.cleared > 0) {
           ghostNoteParts.push(`removed ${sessionCleanup.cleared} recovered session file${sessionCleanup.cleared === 1 ? "" : "s"}`);
+        }
+        if (ownerSessionId) {
+          ghostNoteParts.push(`cleared owning session: ${ownerSessionId}`);
         }
         const ghostNote = ghostNoteParts.length > 0 ? ` (${ghostNoteParts.join(", ")})` : "";
         const runtimeCleanupNote = (() => {
@@ -23297,7 +23371,7 @@ var stateClearTool = {
         return {
           content: [{
             type: "text",
-            text: `${legacyCleanup.hadFailure || sessionCleanup.hadFailure ? "Warning: Some files could not be removed" : "Successfully cleared state"} for mode: ${mode} in session: ${sessionId}${ghostNote}${runtimeCleanupNote}`
+            text: `${legacyCleanup.hadFailure || sessionCleanup.hadFailure || ownerSessionCleanup.hadFailure || ownerLegacyCleanup.hadFailure ? "Warning: Some files could not be removed" : "Successfully cleared state"} for mode: ${mode} in session: ${sessionId}${ghostNote}${runtimeCleanupNote}`
           }]
         };
       }
